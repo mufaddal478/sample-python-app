@@ -51,17 +51,39 @@ jobs:
 
       - name: Deploy to EKS
         run: |
-          # Use your ECR image URI in the deployment manifest
           IMAGE_URI="${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ env.GITHUB_SHA }}"
           
           # Create and apply the Kubernetes deployment manifest
           kubectl create deployment ${{ env.DEPLOYMENT_NAME }} --image=$IMAGE_URI --dry-run -o yaml > deployment.yaml
           kubectl apply -f deployment.yaml
 
-          # Create and apply the Kubernetes LoadBalancer service manifest
-          kubectl create service loadbalancer ${{ env.DEPLOYMENT_NAME }} --tcp=80:${{ env.PORT }} --dry-run -o yaml > service.yaml
+          # Create a ClusterIP Service
+          kubectl create service clusterip ${{ env.DEPLOYMENT_NAME }} --tcp=80:${{ env.PORT }} --dry-run -o yaml > service.yaml
           kubectl apply -f service.yaml
-          
-          # Check the status of the rollout and service
+
+          # Create the Ingress resource and apply it
+          cat <<EOF | kubectl apply -f -
+          apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            name: ${{ env.DEPLOYMENT_NAME }}-ingress
+            annotations:
+              alb.ingress.kubernetes.io/scheme: internet-facing
+              alb.ingress.kubernetes.io/target-type: ip
+          spec:
+            ingressClassName: alb
+            rules:
+            - http:
+                paths:
+                - path: /
+                  pathType: Prefix
+                  backend:
+                    service:
+                      name: ${{ env.DEPLOYMENT_NAME }}
+                      port:
+                        number: 80
+          EOF
+
           kubectl rollout status deployment/${{ env.DEPLOYMENT_NAME }}
           kubectl get services -o wide
+          kubectl get ingress -o wide
